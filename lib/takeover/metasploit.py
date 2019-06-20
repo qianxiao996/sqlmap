@@ -53,7 +53,7 @@ from thirdparty import six
 if IS_WIN:
     import msvcrt
 
-class Metasploit:
+class Metasploit(object):
     """
     This class defines methods to call Metasploit for plugins.
     """
@@ -598,7 +598,7 @@ class Metasploit:
 
             except select.error as ex:
                 # Reference: https://github.com/andymccurdy/redis-py/pull/743/commits/2b59b25bb08ea09e98aede1b1f23a270fc085a9f
-                if (ex[0] if six.PY2 else ex.errno) == errno.EINTR:
+                if ex.args[0] == errno.EINTR:
                     continue
                 else:
                     return proc.returncode

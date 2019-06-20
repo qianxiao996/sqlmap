@@ -5,12 +5,15 @@ Copyright (c) 2006-2019 sqlmap developers (http://sqlmap.org/)
 See the file 'LICENSE' for copying permission
 """
 
+from __future__ import division
+
 import binascii
+import functools
 import math
 import os
 import random
-import uuid
 import sys
+import uuid
 
 class WichmannHill(random.Random):
     """
@@ -109,7 +112,7 @@ class WichmannHill(random.Random):
         period.
         """
 
-        if not n >= 0:
+        if n < 0:
             raise ValueError("n must be >= 0")
         x, y, z = self._seed
         x = int(x * pow(171, n, 30269)) % 30269
@@ -197,10 +200,44 @@ def round(x, d=0):
 
     p = 10 ** d
     if x > 0:
-        return float(math.floor((x * p) + 0.5))/p
+        return float(math.floor((x * p) + 0.5)) / p
     else:
-        return float(math.ceil((x * p) - 0.5))/p
+        return float(math.ceil((x * p) - 0.5)) / p
 
+def cmp_to_key(mycmp):
+    """Convert a cmp= function into a key= function"""
+    class K(object):
+        __slots__ = ['obj']
+
+        def __init__(self, obj, *args):
+            self.obj = obj
+
+        def __lt__(self, other):
+            return mycmp(self.obj, other.obj) < 0
+
+        def __gt__(self, other):
+            return mycmp(self.obj, other.obj) > 0
+
+        def __eq__(self, other):
+            return mycmp(self.obj, other.obj) == 0
+
+        def __le__(self, other):
+            return mycmp(self.obj, other.obj) <= 0
+
+        def __ge__(self, other):
+            return mycmp(self.obj, other.obj) >= 0
+
+        def __ne__(self, other):
+            return mycmp(self.obj, other.obj) != 0
+
+        def __hash__(self):
+            raise TypeError('hash not implemented')
+
+    return K
+
+# Note: patch for Python 2.6
+if not hasattr(functools, "cmp_to_key"):
+    functools.cmp_to_key = cmp_to_key
 
 if sys.version_info >= (3, 0):
     xrange = range

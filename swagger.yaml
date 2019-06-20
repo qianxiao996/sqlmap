@@ -270,7 +270,6 @@ paths:
                   tmpPath: null 
                   titles: false 
                   getSchema: false 
-                  identifyWaf: false 
                   paramDel: null 
                   safeReqFile: null 
                   regKey: null 
@@ -403,7 +402,7 @@ paths:
                   googleDork: null 
                   saveConfig: null 
                   sqlShell: false 
-                  tech: BEUSTQ 
+                  technique: BEUSTQ
                   textOnly: false 
                   cookieDel: null 
                   commonColumns: false 

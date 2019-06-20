@@ -53,7 +53,7 @@ class Enumeration(GenericEnumeration):
 
         return kb.data.cachedUsers
 
-    def getPrivileges(self, *args):
+    def getPrivileges(self, *args, **kwargs):
         warnMsg = "on Sybase it is not possible to fetch "
         warnMsg += "database users privileges, sqlmap will check whether "
         warnMsg += "or not the database users are database administrators"
@@ -103,7 +103,7 @@ class Enumeration(GenericEnumeration):
             retVal = pivotDumpTable("(%s) AS %s" % (query, kb.aliasName), ['%s.name' % kb.aliasName], blind=blind, alias=kb.aliasName)
 
             if retVal:
-                kb.data.cachedDbs = list(retVal[0].values())[0]
+                kb.data.cachedDbs = next(six.itervalues(retVal[0]))
                 break
 
         if kb.data.cachedDbs:
@@ -147,7 +147,7 @@ class Enumeration(GenericEnumeration):
                 retVal = pivotDumpTable("(%s) AS %s" % (query, kb.aliasName), ['%s.name' % kb.aliasName], blind=blind, alias=kb.aliasName)
 
                 if retVal:
-                    for table in list(retVal[0].values())[0]:
+                    for table in next(six.itervalues(retVal[0])):
                         if db not in kb.data.cachedTables:
                             kb.data.cachedTables[db] = [table]
                         else:
@@ -196,9 +196,9 @@ class Enumeration(GenericEnumeration):
             self.getTables()
 
             if len(kb.data.cachedTables) > 0:
-                tblList = list(kb.data.cachedTables.values())
+                tblList = list(six.itervalues(kb.data.cachedTables))
 
-                if isListLike(tblList[0]):
+                if tblList and isListLike(tblList[0]):
                     tblList = tblList[0]
             else:
                 errMsg = "unable to retrieve the tables "
@@ -316,3 +316,9 @@ class Enumeration(GenericEnumeration):
     def getHostname(self):
         warnMsg = "on Sybase it is not possible to enumerate the hostname"
         logger.warn(warnMsg)
+
+    def getStatements(self):
+        warnMsg = "on Sybase it is not possible to enumerate the SQL statements"
+        logger.warn(warnMsg)
+
+        return []

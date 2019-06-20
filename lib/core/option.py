@@ -5,6 +5,9 @@ Copyright (c) 2006-2019 sqlmap developers (http://sqlmap.org/)
 See the file 'LICENSE' for copying permission
 """
 
+from __future__ import division
+
+import functools
 import glob
 import inspect
 import logging
@@ -23,8 +26,6 @@ from lib.core.common import boldifyMessage
 from lib.core.common import checkFile
 from lib.core.common import dataToStdout
 from lib.core.common import decodeStringEscape
-from lib.core.common import getPublicTypeMembers
-from lib.core.common import getSafeExString
 from lib.core.common import fetchRandomAgent
 from lib.core.common import filterNone
 from lib.core.common import findLocalPort
@@ -32,6 +33,8 @@ from lib.core.common import findPageForms
 from lib.core.common import getConsoleWidth
 from lib.core.common import getFileItems
 from lib.core.common import getFileType
+from lib.core.common import getPublicTypeMembers
+from lib.core.common import getSafeExString
 from lib.core.common import intersect
 from lib.core.common import normalizePath
 from lib.core.common import ntToPosixSlashes
@@ -52,6 +55,7 @@ from lib.core.common import setOptimize
 from lib.core.common import setPaths
 from lib.core.common import singleTimeWarnMessage
 from lib.core.common import urldecode
+from lib.core.compat import cmp
 from lib.core.compat import round
 from lib.core.compat import xrange
 from lib.core.convert import getUnicode
@@ -130,19 +134,19 @@ from lib.parse.payloads import loadBoundaries
 from lib.parse.payloads import loadPayloads
 from lib.parse.sitemap import parseSitemap
 from lib.request.basic import checkCharEncoding
-from lib.request.connect import Connect as Request
-from lib.request.dns import DNSServer
 from lib.request.basicauthhandler import SmartHTTPBasicAuthHandler
 from lib.request.chunkedhandler import ChunkedHandler
+from lib.request.connect import Connect as Request
+from lib.request.dns import DNSServer
 from lib.request.httpshandler import HTTPSHandler
 from lib.request.pkihandler import HTTPSPKIAuthHandler
 from lib.request.rangehandler import HTTPRangeHandler
 from lib.request.redirecthandler import SmartRedirectHandler
-from lib.utils.har import HTTPCollectorFactory
 from lib.utils.crawler import crawl
 from lib.utils.deps import checkDependencies
-from lib.utils.search import search
+from lib.utils.har import HTTPCollectorFactory
 from lib.utils.purge import purge
+from lib.utils.search import search
 from thirdparty import six
 from thirdparty.keepalive import keepalive
 from thirdparty.multipart import multipartpost
@@ -658,10 +662,10 @@ def _setTechnique():
     validTechniques = sorted(getPublicTypeMembers(PAYLOAD.TECHNIQUE), key=lambda x: x[1])
     validLetters = [_[0][0].upper() for _ in validTechniques]
 
-    if conf.tech and isinstance(conf.tech, six.string_types):
+    if conf.technique and isinstance(conf.technique, six.string_types):
         _ = []
 
-        for letter in conf.tech.upper():
+        for letter in conf.technique.upper():
             if letter not in validLetters:
                 errMsg = "value for --technique must be a string composed "
                 errMsg += "by the letters %s. Refer to the " % ", ".join(validLetters)
@@ -673,7 +677,7 @@ def _setTechnique():
                     _.append(validInt)
                     break
 
-        conf.tech = _
+        conf.technique = _
 
 def _setDBMS():
     """
@@ -822,7 +826,7 @@ def _setTamperingFunctions():
             logger.warning(warnMsg)
 
         if resolve_priorities and priorities:
-            priorities.sort(reverse=True)
+            priorities.sort(key=functools.cmp_to_key(lambda a, b: cmp(a[0], b[0])), reverse=True)
             kb.tamperFunctions = []
 
             for _, function in priorities:
@@ -836,6 +840,7 @@ def _setPreprocessFunctions():
     if conf.preprocess:
         for script in re.split(PARAMETER_SPLITTING_REGEX, conf.preprocess):
             found = False
+            function = None
 
             script = safeFilepathEncode(script.strip())
 
@@ -901,42 +906,6 @@ def _setPreprocessFunctions():
                     errMsg += "should return a tuple '(page, headers, code)' "
                     errMsg += "(Note: find template script at '%s')" % filename
                     raise SqlmapGenericException(errMsg)
-
-def _setWafFunctions():
-    """
-    Loads WAF/IPS detecting functions from script(s)
-    """
-
-    if conf.identifyWaf:
-        for found in glob.glob(os.path.join(paths.SQLMAP_WAF_PATH, "*.py")):
-            dirname, filename = os.path.split(found)
-            dirname = os.path.abspath(dirname)
-
-            if filename == "__init__.py":
-                continue
-
-            debugMsg = "loading WAF script '%s'" % filename[:-3]
-            logger.debug(debugMsg)
-
-            if dirname not in sys.path:
-                sys.path.insert(0, dirname)
-
-            try:
-                if filename[:-3] in sys.modules:
-                    del sys.modules[filename[:-3]]
-                module = __import__(safeFilepathEncode(filename[:-3]))
-            except ImportError as ex:
-                raise SqlmapSyntaxException("cannot import WAF script '%s' (%s)" % (getUnicode(filename[:-3]), getSafeExString(ex)))
-
-            _ = dict(inspect.getmembers(module))
-            if "detect" not in _:
-                errMsg = "missing function 'detect(get_page)' "
-                errMsg += "in WAF script '%s'" % found
-                raise SqlmapGenericException(errMsg)
-            else:
-                kb.wafFunctions.append((_["detect"], _.get("__product__", filename[:-3])))
-
-        kb.wafFunctions = sorted(kb.wafFunctions, key=lambda _: "generic" in _[1].lower())
 
 def _setThreads():
     if not isinstance(conf.threads, int) or conf.threads <= 0:
@@ -1007,7 +976,7 @@ def _setSocketPreConnect():
 
         return retVal
 
-    if not hasattr(socket.socket, "_create_connection"):
+    if not hasattr(socket, "_create_connection"):
         socket._ready = {}
         socket._create_connection = socket.create_connection
         socket.create_connection = create_connection
@@ -1020,119 +989,120 @@ def _setHTTPHandlers():
     """
     Check and set the HTTP/SOCKS proxy for all HTTP requests.
     """
-    global proxyHandler
 
-    for _ in ("http", "https"):
-        if hasattr(proxyHandler, "%s_open" % _):
-            delattr(proxyHandler, "%s_open" % _)
+    with kb.locks.handlers:
+        if conf.proxyList is not None:
+            if not conf.proxyList:
+                errMsg = "list of usable proxies is exhausted"
+                raise SqlmapNoneDataException(errMsg)
 
-    if conf.proxyList is not None:
-        if not conf.proxyList:
-            errMsg = "list of usable proxies is exhausted"
-            raise SqlmapNoneDataException(errMsg)
+            conf.proxy = conf.proxyList[0]
+            conf.proxyList = conf.proxyList[1:]
 
-        conf.proxy = conf.proxyList[0]
-        conf.proxyList = conf.proxyList[1:]
+            infoMsg = "loading proxy '%s' from a supplied proxy list file" % conf.proxy
+            logger.info(infoMsg)
 
-        infoMsg = "loading proxy '%s' from a supplied proxy list file" % conf.proxy
-        logger.info(infoMsg)
-
-    elif not conf.proxy:
-        if conf.hostname in ("localhost", "127.0.0.1") or conf.ignoreProxy:
-            proxyHandler.proxies = {}
-
-    if conf.proxy:
-        debugMsg = "setting the HTTP/SOCKS proxy for all HTTP requests"
-        logger.debug(debugMsg)
-
-        try:
-            _ = _urllib.parse.urlsplit(conf.proxy)
-        except Exception as ex:
-            errMsg = "invalid proxy address '%s' ('%s')" % (conf.proxy, getSafeExString(ex))
-            raise SqlmapSyntaxException(errMsg)
-
-        hostnamePort = _.netloc.split(":")
-
-        scheme = _.scheme.upper()
-        hostname = hostnamePort[0]
-        port = None
-        username = None
-        password = None
-
-        if len(hostnamePort) == 2:
-            try:
-                port = int(hostnamePort[1])
-            except:
-                pass  # drops into the next check block
-
-        if not all((scheme, hasattr(PROXY_TYPE, scheme), hostname, port)):
-            errMsg = "proxy value must be in format '(%s)://address:port'" % "|".join(_[0].lower() for _ in getPublicTypeMembers(PROXY_TYPE))
-            raise SqlmapSyntaxException(errMsg)
-
-        if conf.proxyCred:
-            _ = re.search(r"\A(.*?):(.*?)\Z", conf.proxyCred)
-            if not _:
-                errMsg = "proxy authentication credentials "
-                errMsg += "value must be in format username:password"
-                raise SqlmapSyntaxException(errMsg)
-            else:
-                username = _.group(1)
-                password = _.group(2)
-
-        if scheme in (PROXY_TYPE.SOCKS4, PROXY_TYPE.SOCKS5):
-            proxyHandler.proxies = {}
-
-            if scheme == PROXY_TYPE.SOCKS4:
-                warnMsg = "SOCKS4 does not support resolving (DNS) names (i.e. causing DNS leakage)"
-                singleTimeWarnMessage(warnMsg)
-
-            socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5 if scheme == PROXY_TYPE.SOCKS5 else socks.PROXY_TYPE_SOCKS4, hostname, port, username=username, password=password)
-            socks.wrapmodule(_http_client)
-        else:
-            socks.unwrapmodule(_http_client)
-
-            if conf.proxyCred:
-                # Reference: http://stackoverflow.com/questions/34079/how-to-specify-an-authenticated-proxy-for-a-python-http-connection
-                proxyString = "%s@" % conf.proxyCred
-            else:
-                proxyString = ""
-
-            proxyString += "%s:%d" % (hostname, port)
-            proxyHandler.proxies = {"http": proxyString, "https": proxyString}
-
-        proxyHandler.__init__(proxyHandler.proxies)
-
-    debugMsg = "creating HTTP requests opener object"
-    logger.debug(debugMsg)
-
-    handlers = filterNone([multipartPostHandler, proxyHandler if proxyHandler.proxies else None, authHandler, redirectHandler, rangeHandler, chunkedHandler if conf.chunked else None, httpsHandler])
-
-    if not conf.dropSetCookie:
-        if not conf.loadCookies:
-            conf.cj = _http_cookiejar.CookieJar()
-        else:
-            conf.cj = _http_cookiejar.MozillaCookieJar()
-            resetCookieJar(conf.cj)
-
-        handlers.append(_urllib.request.HTTPCookieProcessor(conf.cj))
-
-    # Reference: http://www.w3.org/Protocols/rfc2616/rfc2616-sec8.html
-    if conf.keepAlive:
-        warnMsg = "persistent HTTP(s) connections, Keep-Alive, has "
-        warnMsg += "been disabled because of its incompatibility "
+        elif not conf.proxy:
+            if conf.hostname in ("localhost", "127.0.0.1") or conf.ignoreProxy:
+                proxyHandler.proxies = {}
 
         if conf.proxy:
-            warnMsg += "with HTTP(s) proxy"
-            logger.warn(warnMsg)
-        elif conf.authType:
-            warnMsg += "with authentication methods"
-            logger.warn(warnMsg)
-        else:
-            handlers.append(keepAliveHandler)
+            debugMsg = "setting the HTTP/SOCKS proxy for all HTTP requests"
+            logger.debug(debugMsg)
 
-    opener = _urllib.request.build_opener(*handlers)
-    opener.addheaders = []  # Note: clearing default "User-Agent: Python-urllib/X.Y"
-    _urllib.request.install_opener(opener)
+            try:
+                _ = _urllib.parse.urlsplit(conf.proxy)
+            except Exception as ex:
+                errMsg = "invalid proxy address '%s' ('%s')" % (conf.proxy, getSafeExString(ex))
+                raise SqlmapSyntaxException(errMsg)
+
+            hostnamePort = _.netloc.split(":")
+
+            scheme = _.scheme.upper()
+            hostname = hostnamePort[0]
+            port = None
+            username = None
+            password = None
+
+            if len(hostnamePort) == 2:
+                try:
+                    port = int(hostnamePort[1])
+                except:
+                    pass  # drops into the next check block
+
+            if not all((scheme, hasattr(PROXY_TYPE, scheme), hostname, port)):
+                errMsg = "proxy value must be in format '(%s)://address:port'" % "|".join(_[0].lower() for _ in getPublicTypeMembers(PROXY_TYPE))
+                raise SqlmapSyntaxException(errMsg)
+
+            if conf.proxyCred:
+                _ = re.search(r"\A(.*?):(.*?)\Z", conf.proxyCred)
+                if not _:
+                    errMsg = "proxy authentication credentials "
+                    errMsg += "value must be in format username:password"
+                    raise SqlmapSyntaxException(errMsg)
+                else:
+                    username = _.group(1)
+                    password = _.group(2)
+
+            if scheme in (PROXY_TYPE.SOCKS4, PROXY_TYPE.SOCKS5):
+                proxyHandler.proxies = {}
+
+                if scheme == PROXY_TYPE.SOCKS4:
+                    warnMsg = "SOCKS4 does not support resolving (DNS) names (i.e. causing DNS leakage)"
+                    singleTimeWarnMessage(warnMsg)
+
+                socks.setdefaultproxy(socks.PROXY_TYPE_SOCKS5 if scheme == PROXY_TYPE.SOCKS5 else socks.PROXY_TYPE_SOCKS4, hostname, port, username=username, password=password)
+                socks.wrapmodule(_http_client)
+            else:
+                socks.unwrapmodule(_http_client)
+
+                if conf.proxyCred:
+                    # Reference: http://stackoverflow.com/questions/34079/how-to-specify-an-authenticated-proxy-for-a-python-http-connection
+                    proxyString = "%s@" % conf.proxyCred
+                else:
+                    proxyString = ""
+
+                proxyString += "%s:%d" % (hostname, port)
+                proxyHandler.proxies = {"http": proxyString, "https": proxyString}
+
+            proxyHandler.__init__(proxyHandler.proxies)
+
+        if not proxyHandler.proxies:
+            for _ in ("http", "https"):
+                if hasattr(proxyHandler, "%s_open" % _):
+                    delattr(proxyHandler, "%s_open" % _)
+
+        debugMsg = "creating HTTP requests opener object"
+        logger.debug(debugMsg)
+
+        handlers = filterNone([multipartPostHandler, proxyHandler if proxyHandler.proxies else None, authHandler, redirectHandler, rangeHandler, chunkedHandler if conf.chunked else None, httpsHandler])
+
+        if not conf.dropSetCookie:
+            if not conf.loadCookies:
+                conf.cj = _http_cookiejar.CookieJar()
+            else:
+                conf.cj = _http_cookiejar.MozillaCookieJar()
+                resetCookieJar(conf.cj)
+
+            handlers.append(_urllib.request.HTTPCookieProcessor(conf.cj))
+
+        # Reference: http://www.w3.org/Protocols/rfc2616/rfc2616-sec8.html
+        if conf.keepAlive:
+            warnMsg = "persistent HTTP(s) connections, Keep-Alive, has "
+            warnMsg += "been disabled because of its incompatibility "
+
+            if conf.proxy:
+                warnMsg += "with HTTP(s) proxy"
+                logger.warn(warnMsg)
+            elif conf.authType:
+                warnMsg += "with authentication methods"
+                logger.warn(warnMsg)
+            else:
+                handlers.append(keepAliveHandler)
+
+        opener = _urllib.request.build_opener(*handlers)
+        opener.addheaders = []  # Note: clearing default "User-Agent: Python-urllib/X.Y"
+        _urllib.request.install_opener(opener)
 
 def _setSafeVisit():
     """
@@ -1189,7 +1159,7 @@ def _setSafeVisit():
             else:
                 conf.safeUrl = "http://" + conf.safeUrl
 
-    if conf.safeFreq <= 0:
+    if (conf.safeFreq or 0) <= 0:
         errMsg = "please provide a valid value (>0) for safe frequency (--safe-freq) while using safe visit features"
         raise SqlmapSyntaxException(errMsg)
 
@@ -1497,15 +1467,7 @@ def _createHomeDirectories():
                 warnMsg = "using '%s' as the %s directory" % (directory, context)
                 logger.warn(warnMsg)
         except (OSError, IOError) as ex:
-            try:
-                tempDir = tempfile.mkdtemp(prefix="sqlmap%s" % context)
-            except Exception as _:
-                errMsg = "unable to write to the temporary directory ('%s'). " % _
-                errMsg += "Please make sure that your disk is not full and "
-                errMsg += "that you have sufficient write permissions to "
-                errMsg += "create temporary files and/or directories"
-                raise SqlmapSystemException(errMsg)
-
+            tempDir = tempfile.mkdtemp(prefix="sqlmap%s" % context)
             warnMsg = "unable to %s %s directory " % ("create" if not os.path.isdir(directory) else "write to the", context)
             warnMsg += "'%s' (%s). " % (directory, getUnicode(ex))
             warnMsg += "Using temporary directory '%s' instead" % getUnicode(tempDir)
@@ -1591,10 +1553,14 @@ def _cleanupOptions():
 
     if conf.testParameter:
         conf.testParameter = urldecode(conf.testParameter)
-        conf.testParameter = conf.testParameter.replace(" ", "")
-        conf.testParameter = re.split(PARAMETER_SPLITTING_REGEX, conf.testParameter)
+        conf.testParameter = [_.strip() for _ in re.split(PARAMETER_SPLITTING_REGEX, conf.testParameter)]
     else:
         conf.testParameter = []
+
+    if conf.paramFilter:
+        conf.paramFilter = [_.strip() for _ in re.split(PARAMETER_SPLITTING_REGEX, conf.paramFilter.upper())]
+    else:
+        conf.paramFilter = []
 
     if conf.base64Parameter:
         conf.base64Parameter = urldecode(conf.base64Parameter)
@@ -1631,7 +1597,7 @@ def _cleanupOptions():
         conf.delay = float(conf.delay)
 
     if conf.url:
-        conf.url = conf.url.strip()
+        conf.url = conf.url.strip().lstrip('/')
         if not re.search(r"\A\w+://", conf.url):
             conf.url = "http://%s" % conf.url
 
@@ -1873,6 +1839,7 @@ def _setKnowledgeBaseAttributes(flushAll=True):
     kb.chars.stop = "%s%s%s" % (KB_CHARS_BOUNDARY_CHAR, randomStr(length=3, alphabet=KB_CHARS_LOW_FREQUENCY_ALPHABET), KB_CHARS_BOUNDARY_CHAR)
     kb.chars.at, kb.chars.space, kb.chars.dollar, kb.chars.hash_ = ("%s%s%s" % (KB_CHARS_BOUNDARY_CHAR, _, KB_CHARS_BOUNDARY_CHAR) for _ in randomStr(length=4, lowercase=True))
 
+    kb.codePage = None
     kb.columnExistsChoice = None
     kb.commonOutputs = None
     kb.connErrorChoice = None
@@ -1910,6 +1877,7 @@ def _setKnowledgeBaseAttributes(flushAll=True):
     kb.followSitemapRecursion = None
     kb.forcedDbms = None
     kb.forcePartialUnion = False
+    kb.forceThreads = None
     kb.forceWhere = None
     kb.futileUnion = None
     kb.heavilyDynamic = False
@@ -1919,20 +1887,21 @@ def _setKnowledgeBaseAttributes(flushAll=True):
     kb.heuristicMode = False
     kb.heuristicPage = False
     kb.heuristicTest = None
-    kb.hintValue = None
+    kb.hintValue = ""
     kb.htmlFp = []
     kb.httpErrorCodes = {}
     kb.inferenceMode = False
     kb.ignoreCasted = None
     kb.ignoreNotFound = False
     kb.ignoreTimeout = False
+    kb.identifiedWafs = set()
     kb.injection = InjectionDict()
     kb.injections = []
     kb.laggingChecked = False
     kb.lastParserStatus = None
 
     kb.locks = AttribDict()
-    for _ in ("cache", "connError", "count", "index", "io", "limit", "log", "socket", "redirect", "request", "value"):
+    for _ in ("cache", "connError", "count", "handlers", "index", "io", "limit", "log", "socket", "redirect", "request", "value"):
         kb.locks[_] = threading.Lock()
 
     kb.matchRatio = None
@@ -2006,7 +1975,6 @@ def _setKnowledgeBaseAttributes(flushAll=True):
     kb.tableExistsChoice = None
     kb.uChar = NULL
     kb.unionDuplicates = False
-    kb.wafSpecificResponse = None
     kb.wizardMode = False
     kb.xpCmdshellAvailable = False
 
@@ -2394,10 +2362,6 @@ def _basicOptionValidation():
         errMsg = "option '-d' is incompatible with option '--dbms'"
         raise SqlmapSyntaxException(errMsg)
 
-    if conf.identifyWaf and conf.skipWaf:
-        errMsg = "switch '--identify-waf' is incompatible with switch '--skip-waf'"
-        raise SqlmapSyntaxException(errMsg)
-
     if conf.titles and conf.nullConnection:
         errMsg = "switch '--titles' is incompatible with switch '--null-connection'"
         raise SqlmapSyntaxException(errMsg)
@@ -2512,7 +2476,7 @@ def _basicOptionValidation():
         errMsg = "option '-d' is incompatible with switch '--tor'"
         raise SqlmapSyntaxException(errMsg)
 
-    if not conf.tech:
+    if not conf.technique:
         errMsg = "option '--technique' can't be empty"
         raise SqlmapSyntaxException(errMsg)
 
@@ -2630,7 +2594,6 @@ def init():
     _listTamperingFunctions()
     _setTamperingFunctions()
     _setPreprocessFunctions()
-    _setWafFunctions()
     _setTrafficOutputFP()
     _setupHTTPCollector()
     _setHttpChunked()

@@ -16,7 +16,7 @@ _multiprocessing = None
 try:
     import multiprocessing
 
-    # problems on FreeBSD (Reference: http://www.eggheadcafe.com/microsoft/Python/35880259/multiprocessing-on-freebsd.aspx)
+    # problems on FreeBSD (Reference: https://web.archive.org/web/20110710041353/http://www.eggheadcafe.com/microsoft/Python/35880259/multiprocessing-on-freebsd.aspx)
     _ = multiprocessing.Queue()
 
     # problems with ctypes (Reference: https://github.com/sqlmapproject/sqlmap/issues/2952)
@@ -55,15 +55,17 @@ from lib.core.common import getPublicTypeMembers
 from lib.core.common import getSafeExString
 from lib.core.common import hashDBRetrieve
 from lib.core.common import hashDBWrite
+from lib.core.common import isZipFile
 from lib.core.common import normalizeUnicode
+from lib.core.common import openFile
 from lib.core.common import paths
 from lib.core.common import readInput
 from lib.core.common import singleTimeLogMessage
 from lib.core.common import singleTimeWarnMessage
 from lib.core.compat import xrange
-from lib.core.convert import encodeHex
 from lib.core.convert import decodeBase64
 from lib.core.convert import decodeHex
+from lib.core.convert import encodeHex
 from lib.core.convert import getBytes
 from lib.core.convert import getText
 from lib.core.convert import getUnicode
@@ -76,29 +78,32 @@ from lib.core.enums import HASH
 from lib.core.enums import MKSTEMP_PREFIX
 from lib.core.exception import SqlmapDataException
 from lib.core.exception import SqlmapUserQuitException
+from lib.core.patch import resolveCrossReferences
 from lib.core.settings import COMMON_PASSWORD_SUFFIXES
 from lib.core.settings import COMMON_USER_COLUMNS
 from lib.core.settings import DEV_EMAIL_ADDRESS
 from lib.core.settings import DUMMY_USER_PREFIX
+from lib.core.settings import HASH_BINARY_COLUMNS_REGEX
 from lib.core.settings import HASH_EMPTY_PASSWORD_MARKER
 from lib.core.settings import HASH_MOD_ITEM_DISPLAY
 from lib.core.settings import HASH_RECOGNITION_QUIT_THRESHOLD
+from lib.core.settings import INVALID_UNICODE_CHAR_FORMAT
 from lib.core.settings import IS_WIN
 from lib.core.settings import ITOA64
 from lib.core.settings import NULL
-from lib.core.settings import UNICODE_ENCODING
 from lib.core.settings import ROTATING_CHARS
+from lib.core.settings import UNICODE_ENCODING
 from lib.core.wordlist import Wordlist
 from thirdparty import six
 from thirdparty.colorama.initialise import init as coloramainit
-from thirdparty.pydes.pyDes import des
 from thirdparty.pydes.pyDes import CBC
+from thirdparty.pydes.pyDes import des
 from thirdparty.six.moves import queue as _queue
 
 def mysql_passwd(password, uppercase=True):
     """
     Reference(s):
-        http://csl.sublevel3.org/mysql-password-function/
+        https://web.archive.org/web/20120215205312/http://csl.sublevel3.org/mysql-password-function/
 
     >>> mysql_passwd(password='testpass', uppercase=True)
     '*00E247AC5F9AF26AE0194B41E1E769DEE1429A29'
@@ -113,8 +118,8 @@ def mysql_passwd(password, uppercase=True):
 def mysql_old_passwd(password, uppercase=True):  # prior to version '4.1'
     """
     Reference(s):
-        http://www.sfr-fresh.com/unix/privat/tpop3d-1.5.5.tar.gz:a/tpop3d-1.5.5/password.c
-        http://voidnetwork.org/5ynL0rd/darkc0de/python_script/darkMySQLi.html
+        https://web.archive.org/web/20091205000600/http://www.sfr-fresh.com/unix/privat/tpop3d-1.5.5.tar.gz:a/tpop3d-1.5.5/password.c
+        https://github.com/pwnieexpress/pwn_plug_sources/blob/master/src/darkmysqli/DarkMySQLi.py
 
     >>> mysql_old_passwd(password='testpass', uppercase=True)
     '7DCDA0D57290B453'
@@ -577,9 +582,9 @@ def storeHashesToFile(attack_dict):
             if hash_ and hash_ != NULL and hashRecognition(hash_):
                 item = None
                 if user and not user.startswith(DUMMY_USER_PREFIX):
-                    item = "%s:%s\n" % (user.encode(UNICODE_ENCODING), hash_.encode(UNICODE_ENCODING))
+                    item = "%s:%s\n" % (user, hash_)
                 else:
-                    item = "%s\n" % hash_.encode(UNICODE_ENCODING)
+                    item = "%s\n" % hash_
 
                 if item and item not in items:
                     items.add(item)
@@ -597,7 +602,7 @@ def storeHashesToFile(attack_dict):
         infoMsg = "writing hashes to a temporary file '%s' " % filename
         logger.info(infoMsg)
 
-        with open(filename, "w+") as f:
+        with openFile(filename, "w+") as f:
             for item in items:
                 f.write(item)
 
@@ -632,11 +637,24 @@ def attackDumpedTable():
         col_user = ''
         col_passwords = set()
         attack_dict = {}
+        binary_fields = OrderedSet()
+        replacements = {}
 
-        for column in sorted(columns, key=lambda _: len(_), reverse=True):
+        for column in sorted(columns, key=len, reverse=True):
             if column and column.lower() in COMMON_USER_COLUMNS:
                 col_user = column
                 break
+
+        for column in columns:
+            if column != "__infos__" and table[column]["values"]:
+                if all(INVALID_UNICODE_CHAR_FORMAT.split('%')[0] in (value or "") for value in table[column]["values"]):
+                    binary_fields.add(column)
+
+        if binary_fields:
+            _ = ','.join(binary_fields)
+            warnMsg = "potential binary fields detected ('%s'). In case of any problems you are " % _
+            warnMsg += "advised to rerun table dump with '--fresh-queries --binary-fields=\"%s\"'" % _
+            logger.warn(warnMsg)
 
         for i in xrange(count):
             if not found and i > HASH_RECOGNITION_QUIT_THRESHOLD:
@@ -650,6 +668,11 @@ def attackDumpedTable():
                     continue
 
                 value = table[column]["values"][i]
+
+                if column in binary_fields and re.search(HASH_BINARY_COLUMNS_REGEX, column) is not None:
+                    previous = value
+                    value = encodeHex(getBytes(value), binary=False)
+                    replacements[value] = previous
 
                 if hashRecognition(value):
                     found = True
@@ -684,7 +707,8 @@ def attackDumpedTable():
 
             for (_, hash_, password) in results:
                 if hash_:
-                    lut[hash_.lower()] = password
+                    key = hash_ if hash_ not in replacements else replacements[hash_]
+                    lut[key.lower()] = password
 
             debugMsg = "post-processing table dump"
             logger.debug(debugMsg)
@@ -1002,7 +1026,7 @@ def dictionaryAttack(attack_dict):
                     for dictPath in dictPaths:
                         checkFile(dictPath)
 
-                        if os.path.splitext(dictPath)[1].lower() == ".zip":
+                        if isZipFile(dictPath):
                             _ = zipfile.ZipFile(dictPath, 'r')
                             if len(_.namelist()) == 0:
                                 errMsg = "no file(s) inside '%s'" % dictPath
@@ -1159,7 +1183,7 @@ def dictionaryAttack(attack_dict):
                             warnMsg += "not supported on this platform"
                             singleTimeWarnMessage(warnMsg)
 
-                            class Value():
+                            class Value(object):
                                 pass
 
                             retVal = _queue.Queue()

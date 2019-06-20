@@ -79,6 +79,7 @@ optDict = {
         "skip": "string",
         "skipStatic": "boolean",
         "paramExclude": "string",
+        "paramFilter": "string",
         "dbms": "string",
         "dbmsCred": "string",
         "os": "string",
@@ -104,7 +105,7 @@ optDict = {
     },
 
     "Techniques": {
-        "tech": "string",
+        "technique": "string",
         "timeSec": "integer",
         "uCols": "string",
         "uChar": "string",
@@ -138,6 +139,7 @@ optDict = {
         "dumpAll": "boolean",
         "search": "boolean",
         "getComments": "boolean",
+        "getStatements": "boolean",
         "db": "string",
         "tbl": "string",
         "col": "string",
@@ -228,7 +230,6 @@ optDict = {
         "dependencies": "boolean",
         "disableColoring": "boolean",
         "googlePage": "integer",
-        "identifyWaf": "boolean",
         "listTampers": "boolean",
         "mobile": "boolean",
         "offline": "boolean",

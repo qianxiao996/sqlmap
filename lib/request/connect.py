@@ -41,8 +41,8 @@ from lib.core.common import getRequestHeader
 from lib.core.common import getSafeExString
 from lib.core.common import isMultiThreadMode
 from lib.core.common import logHTTPTraffic
-from lib.core.common import pushValue
 from lib.core.common import popValue
+from lib.core.common import pushValue
 from lib.core.common import randomizeParameterValue
 from lib.core.common import randomInt
 from lib.core.common import randomStr
@@ -52,10 +52,10 @@ from lib.core.common import safeVariableNaming
 from lib.core.common import singleTimeLogMessage
 from lib.core.common import singleTimeWarnMessage
 from lib.core.common import stdev
-from lib.core.common import wasLastResponseDelayed
 from lib.core.common import unsafeVariableNaming
 from lib.core.common import urldecode
 from lib.core.common import urlencode
+from lib.core.common import wasLastResponseDelayed
 from lib.core.compat import patchHeaders
 from lib.core.compat import xrange
 from lib.core.convert import getBytes
@@ -92,19 +92,19 @@ from lib.core.settings import DEFAULT_COOKIE_DELIMITER
 from lib.core.settings import DEFAULT_GET_POST_DELIMITER
 from lib.core.settings import DEFAULT_USER_AGENT
 from lib.core.settings import EVALCODE_ENCODED_PREFIX
-from lib.core.settings import HTTP_ACCEPT_HEADER_VALUE
 from lib.core.settings import HTTP_ACCEPT_ENCODING_HEADER_VALUE
-from lib.core.settings import MAX_CONNECTION_CHUNK_SIZE
+from lib.core.settings import HTTP_ACCEPT_HEADER_VALUE
+from lib.core.settings import IPS_WAF_CHECK_PAYLOAD
+from lib.core.settings import IS_WIN
+from lib.core.settings import LARGE_READ_TRIM_MARKER
+from lib.core.settings import MAX_CONNECTION_READ_SIZE
 from lib.core.settings import MAX_CONNECTIONS_REGEX
 from lib.core.settings import MAX_CONNECTION_TOTAL_SIZE
 from lib.core.settings import MAX_CONSECUTIVE_CONNECTION_ERRORS
 from lib.core.settings import MAX_MURPHY_SLEEP_TIME
 from lib.core.settings import META_REFRESH_REGEX
-from lib.core.settings import MIN_TIME_RESPONSES
 from lib.core.settings import MAX_TIME_RESPONSES
-from lib.core.settings import IPS_WAF_CHECK_PAYLOAD
-from lib.core.settings import IS_WIN
-from lib.core.settings import LARGE_CHUNK_TRIM_MARKER
+from lib.core.settings import MIN_TIME_RESPONSES
 from lib.core.settings import PAYLOAD_DELIMITER
 from lib.core.settings import PERMISSION_DENIED_REGEX
 from lib.core.settings import PLAIN_TEXT_CONTENT_TYPE
@@ -119,11 +119,12 @@ from lib.core.settings import WARN_TIME_STDEV
 from lib.request.basic import decodePage
 from lib.request.basic import forgeHeaders
 from lib.request.basic import processResponse
-from lib.request.direct import direct
 from lib.request.comparison import comparison
+from lib.request.direct import direct
 from lib.request.methodrequest import MethodRequest
 from thirdparty import six
 from thirdparty.odict import OrderedDict
+from thirdparty.six import unichr as _unichr
 from thirdparty.six.moves import http_client as _http_client
 from thirdparty.six.moves import urllib as _urllib
 from thirdparty.socks.socks import ProxyError
@@ -145,7 +146,7 @@ class Connect(object):
         threadData = getCurrentThreadData()
         threadData.retriesCount += 1
 
-        if conf.proxyList and threadData.retriesCount >= conf.retries:
+        if conf.proxyList and threadData.retriesCount >= conf.retries and not kb.locks.handlers.locked():
             warnMsg = "changing proxy"
             logger.warn(warnMsg)
 
@@ -210,15 +211,18 @@ class Connect(object):
                     if not conn:
                         break
                     else:
-                        _ = conn.read(MAX_CONNECTION_CHUNK_SIZE)
+                        try:
+                            part = conn.read(MAX_CONNECTION_READ_SIZE)
+                        except AssertionError:
+                            part = ""
 
-                    if len(_) == MAX_CONNECTION_CHUNK_SIZE:
+                    if len(part) == MAX_CONNECTION_READ_SIZE:
                         warnMsg = "large response detected. This could take a while"
                         singleTimeWarnMessage(warnMsg)
-                        _ = re.sub(r"(?si)%s.+?%s" % (kb.chars.stop, kb.chars.start), "%s%s%s" % (kb.chars.stop, LARGE_CHUNK_TRIM_MARKER, kb.chars.start), _)
-                        retVal += _
+                        part = re.sub(r"(?si)%s.+?%s" % (kb.chars.stop, kb.chars.start), "%s%s%s" % (kb.chars.stop, LARGE_READ_TRIM_MARKER, kb.chars.start), part)
+                        retVal += part
                     else:
-                        retVal += _
+                        retVal += part
                         break
 
                     if len(retVal) > MAX_CONNECTION_TOTAL_SIZE:
@@ -235,22 +239,8 @@ class Connect(object):
         the target URL page content
         """
 
-        start = time.time()
-
-        if isinstance(conf.delay, (int, float)) and conf.delay > 0:
-            time.sleep(conf.delay)
-
         if conf.offline:
             return None, None, None
-        elif conf.dummy or conf.murphyRate and randomInt() % conf.murphyRate == 0:
-            if conf.murphyRate:
-                time.sleep(randomInt() % (MAX_MURPHY_SLEEP_TIME + 1))
-            return getUnicode(randomStr(int(randomInt()), alphabet=[chr(_) for _ in xrange(256)]), {}, int(randomInt())), None, None if not conf.murphyRate else randomInt(3)
-
-        threadData = getCurrentThreadData()
-        with kb.locks.request:
-            kb.requestCounter += 1
-            threadData.lastRequestUID = kb.requestCounter
 
         url = kwargs.get("url", None) or conf.url
         get = kwargs.get("get", None)
@@ -276,17 +266,38 @@ class Connect(object):
         finalCode = kwargs.get("finalCode", False)
         chunked = kwargs.get("chunked", False) or conf.chunked
 
+        start = time.time()
+
+        if isinstance(conf.delay, (int, float)) and conf.delay > 0:
+            time.sleep(conf.delay)
+
+        threadData = getCurrentThreadData()
+        with kb.locks.request:
+            kb.requestCounter += 1
+            threadData.lastRequestUID = kb.requestCounter
+
+        if conf.dummy or conf.murphyRate and randomInt() % conf.murphyRate == 0:
+            if conf.murphyRate:
+                time.sleep(randomInt() % (MAX_MURPHY_SLEEP_TIME + 1))
+
+            page, headers, code = randomStr(int(randomInt()), alphabet=[_unichr(_) for _ in xrange(256)]), None, None if not conf.murphyRate else randomInt(3)
+
+            threadData.lastPage = page
+            threadData.lastCode = code
+
+            return page, headers, code
+
         if multipart:
             post = multipart
+        else:
+            if not post:
+                chunked = False
 
-        if not post:
-            chunked = False
+            elif chunked:
+                post = _urllib.parse.unquote(post)
+                post = chunkSplitPostData(post)
 
-        elif chunked:
-            post = _urllib.parse.unquote(post)
-            post = chunkSplitPostData(post)
-
-        websocket_ = url.lower().startswith("ws")
+        webSocket = url.lower().startswith("ws")
 
         if not _urllib.parse.urlsplit(url).netloc:
             url = _urllib.parse.urljoin(conf.url, url)
@@ -338,8 +349,8 @@ class Connect(object):
                 pass
 
             elif target:
-                if conf.forceSSL and _urllib.parse.urlparse(url).scheme != "https":
-                    url = re.sub(r"(?i)\Ahttp:", "https:", url)
+                if conf.forceSSL:
+                    url = re.sub(r"(?i)\A(http|ws):", r"\g<1>s:", url)
                     url = re.sub(r"(?i):80/", ":443/", url)
 
                 if PLACE.GET in conf.parameters and not get:
@@ -426,7 +437,7 @@ class Connect(object):
 
             post = getBytes(post)
 
-            if websocket_:
+            if webSocket:
                 ws = websocket.WebSocket()
                 ws.settimeout(timeout)
                 ws.connect(url, header=("%s: %s" % _ for _ in headers.items() if _[0] not in ("Host",)), cookie=cookie)  # WebSocket will add Host field of headers automatically
@@ -623,14 +634,14 @@ class Connect(object):
             if responseHeaders:
                 logHeaders = getUnicode("".join(responseHeaders.headers).strip())
 
-            logHTTPTraffic(requestMsg, "%s%s\r\n\r\n%s" % (responseMsg, logHeaders, (page or "")[:MAX_CONNECTION_CHUNK_SIZE]), start, time.time())
+            logHTTPTraffic(requestMsg, "%s%s\r\n\r\n%s" % (responseMsg, logHeaders, (page or "")[:MAX_CONNECTION_READ_SIZE]), start, time.time())
 
             skipLogTraffic = True
 
             if conf.verbose <= 5:
                 responseMsg += getUnicode(logHeaders)
             elif conf.verbose > 5:
-                responseMsg += "%s\r\n\r\n%s" % (logHeaders, (page or "")[:MAX_CONNECTION_CHUNK_SIZE])
+                responseMsg += "%s\r\n\r\n%s" % (logHeaders, (page or "")[:MAX_CONNECTION_READ_SIZE])
 
             if not multipart:
                 logger.log(CUSTOM_LOGGING.TRAFFIC_IN, responseMsg)
@@ -700,7 +711,7 @@ class Connect(object):
                 warnMsg = "connection reset to the target URL"
             elif "URLError" in tbMsg or "error" in tbMsg:
                 warnMsg = "unable to connect to the target URL"
-                match = re.search(r"Errno \d+\] ([^>]+)", tbMsg)
+                match = re.search(r"Errno \d+\] ([^>\n]+)", tbMsg)
                 if match:
                     warnMsg += " ('%s')" % match.group(1).strip()
             elif "NTLM" in tbMsg:
@@ -787,7 +798,7 @@ class Connect(object):
 
             socket.setdefaulttimeout(conf.timeout)
 
-        processResponse(page, responseHeaders, status)
+        processResponse(page, responseHeaders, code, status)
 
         if not skipLogTraffic:
             if conn and getattr(conn, "redurl", None):
@@ -807,12 +818,12 @@ class Connect(object):
             if responseHeaders:
                 logHeaders = getUnicode("".join(responseHeaders.headers).strip())
 
-            logHTTPTraffic(requestMsg, "%s%s\r\n\r\n%s" % (responseMsg, logHeaders, (page or "")[:MAX_CONNECTION_CHUNK_SIZE]), start, time.time())
+            logHTTPTraffic(requestMsg, "%s%s\r\n\r\n%s" % (responseMsg, logHeaders, (page or "")[:MAX_CONNECTION_READ_SIZE]), start, time.time())
 
             if conf.verbose <= 5:
                 responseMsg += getUnicode(logHeaders)
             elif conf.verbose > 5:
-                responseMsg += "%s\r\n\r\n%s" % (logHeaders, (page or "")[:MAX_CONNECTION_CHUNK_SIZE])
+                responseMsg += "%s\r\n\r\n%s" % (logHeaders, (page or "")[:MAX_CONNECTION_READ_SIZE])
 
             if not multipart:
                 logger.log(CUSTOM_LOGGING.TRAFFIC_IN, responseMsg)
@@ -1043,7 +1054,7 @@ class Connect(object):
 
                 match = re.search(r"String\.fromCharCode\(([\d+, ]+)\)", token.value)
                 if match:
-                    token.value = "".join(chr(int(_)) for _ in match.group(1).replace(' ', "").split(','))
+                    token.value = "".join(_unichr(int(_)) for _ in match.group(1).replace(' ', "").split(','))
 
             if not token:
                 if conf.csrfUrl and conf.csrfToken and conf.csrfUrl != conf.url and code == _http_client.OK:
@@ -1074,11 +1085,11 @@ class Connect(object):
             if token:
                 token.value = token.value.strip("'\"")
 
-                for place in (PLACE.GET, PLACE.POST):
-                    if place in conf.parameters:
-                        if place == PLACE.GET and get:
+                for candidate in (PLACE.GET, PLACE.POST):
+                    if candidate in conf.parameters:
+                        if candidate == PLACE.GET and get:
                             get = _adjustParameter(get, token.name, token.value)
-                        elif place == PLACE.POST and post:
+                        elif candidate == PLACE.POST and post:
                             post = _adjustParameter(post, token.name, token.value)
 
                 for i in xrange(len(conf.httpHeaders)):

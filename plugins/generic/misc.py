@@ -28,7 +28,7 @@ from lib.core.exception import SqlmapNoneDataException
 from lib.core.exception import SqlmapUnsupportedFeatureException
 from lib.request import inject
 
-class Miscellaneous:
+class Miscellaneous(object):
     """
     This class defines miscellaneous functionalities for plugins.
     """
@@ -165,7 +165,7 @@ class Miscellaneous:
             inject.goStacked("DROP TABLE %s" % self.cmdTblName, silent=True)
 
             if Backend.isDbms(DBMS.MSSQL):
-                udfDict = {"master..new_xp_cmdshell": None}
+                udfDict = {"master..new_xp_cmdshell": {}}
 
             if udfDict is None:
                 udfDict = self.sysUdfs

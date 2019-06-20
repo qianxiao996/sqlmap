@@ -23,6 +23,7 @@ from lib.core.common import openFile
 from lib.core.common import paramToDict
 from lib.core.common import randomStr
 from lib.core.common import readInput
+from lib.core.common import removePostHintPrefix
 from lib.core.common import resetCookieJar
 from lib.core.common import urldecode
 from lib.core.compat import xrange
@@ -47,18 +48,18 @@ from lib.core.exception import SqlmapMissingPrivileges
 from lib.core.exception import SqlmapNoneDataException
 from lib.core.exception import SqlmapSystemException
 from lib.core.exception import SqlmapUserQuitException
+from lib.core.option import _setAuthCred
 from lib.core.option import _setDBMS
 from lib.core.option import _setKnowledgeBaseAttributes
-from lib.core.option import _setAuthCred
+from lib.core.settings import ARRAY_LIKE_RECOGNITION_REGEX
 from lib.core.settings import ASTERISK_MARKER
 from lib.core.settings import CSRF_TOKEN_PARAMETER_INFIXES
 from lib.core.settings import CUSTOM_INJECTION_MARK_CHAR
 from lib.core.settings import DEFAULT_GET_POST_DELIMITER
 from lib.core.settings import HOST_ALIASES
-from lib.core.settings import ARRAY_LIKE_RECOGNITION_REGEX
 from lib.core.settings import INJECT_HERE_REGEX
-from lib.core.settings import JSON_RECOGNITION_REGEX
 from lib.core.settings import JSON_LIKE_RECOGNITION_REGEX
+from lib.core.settings import JSON_RECOGNITION_REGEX
 from lib.core.settings import MULTIPART_RECOGNITION_REGEX
 from lib.core.settings import PROBLEMATIC_CUSTOM_INJECTION_PATTERNS
 from lib.core.settings import REFERER_ALIASES
@@ -110,7 +111,7 @@ def _setRequestParams():
         def process(match, repl):
             retVal = match.group(0)
 
-            if not (conf.testParameter and match.group("name") not in conf.testParameter):
+            if not (conf.testParameter and match.group("name") not in [removePostHintPrefix(_) for _ in conf.testParameter]):
                 retVal = repl
                 while True:
                     _ = re.search(r"\\g<([^>]+)>", retVal)
@@ -406,7 +407,7 @@ def _setRequestParams():
 
             for parameter in conf.paramDict.get(place, {}):
                 if any(parameter.lower().count(_) for _ in CSRF_TOKEN_PARAMETER_INFIXES):
-                    message = "%s parameter '%s' appears to hold anti-CSRF token. " % (place, parameter)
+                    message = "%sparameter '%s' appears to hold anti-CSRF token. " % ("%s " % place if place != parameter else "", parameter)
                     message += "Do you want sqlmap to automatically update it in further requests? [y/N] "
 
                     if readInput(message, default='N', boolean=True):
@@ -457,11 +458,12 @@ def _resumeHashDBValues():
 
     for injection in hashDBRetrieve(HASHDB_KEYS.KB_INJECTIONS, True) or []:
         if isinstance(injection, InjectionDict) and injection.place in conf.paramDict and injection.parameter in conf.paramDict[injection.place]:
-            if not conf.tech or intersect(conf.tech, injection.data.keys()):
-                if intersect(conf.tech, injection.data.keys()):
-                    injection.data = dict(_ for _ in injection.data.items() if _[0] in conf.tech)
+            if not conf.technique or intersect(conf.technique, injection.data.keys()):
+                if intersect(conf.technique, injection.data.keys()):
+                    injection.data = dict(_ for _ in injection.data.items() if _[0] in conf.technique)
                 if injection not in kb.injections:
                     kb.injections.append(injection)
+                    kb.vulnHosts.add(conf.hostname)
 
     _resumeDBMS()
     _resumeOS()
@@ -638,15 +640,7 @@ def _createTargetDirs():
         if not os.path.isdir(conf.outputPath):
             os.makedirs(conf.outputPath)
     except (OSError, IOError, TypeError) as ex:
-        try:
-            tempDir = tempfile.mkdtemp(prefix="sqlmapoutput")
-        except Exception as _:
-            errMsg = "unable to write to the temporary directory ('%s'). " % _
-            errMsg += "Please make sure that your disk is not full and "
-            errMsg += "that you have sufficient write permissions to "
-            errMsg += "create temporary files and/or directories"
-            raise SqlmapSystemException(errMsg)
-
+        tempDir = tempfile.mkdtemp(prefix="sqlmapoutput")
         warnMsg = "unable to create output directory "
         warnMsg += "'%s' (%s). " % (conf.outputPath, getUnicode(ex))
         warnMsg += "Using temporary directory '%s' instead" % getUnicode(tempDir)

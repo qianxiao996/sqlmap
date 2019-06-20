@@ -5,6 +5,8 @@ Copyright (c) 2006-2019 sqlmap developers (http://sqlmap.org/)
 See the file 'LICENSE' for copying permission
 """
 
+from __future__ import division
+
 import codecs
 import doctest
 import logging
@@ -21,6 +23,7 @@ import traceback
 from extra.beep.beep import beep
 from extra.vulnserver import vulnserver
 from lib.controller.controller import start
+from lib.core.common import clearColors
 from lib.core.common import clearConsoleLine
 from lib.core.common import dataToStdout
 from lib.core.common import randomStr
@@ -33,6 +36,7 @@ from lib.core.data import conf
 from lib.core.data import kb
 from lib.core.data import logger
 from lib.core.data import paths
+from lib.core.data import queries
 from lib.core.enums import MKSTEMP_PREFIX
 from lib.core.exception import SqlmapBaseException
 from lib.core.exception import SqlmapNotVulnerableException
@@ -70,17 +74,19 @@ def vulnTest():
     thread.start()
 
     for options, checks in (
-        ("--flush-session --identify-waf", ("CloudFlare",)),
-        ("--flush-session --parse-errors", (": syntax error", "Type: boolean-based blind", "Type: time-based blind", "Type: UNION query", "back-end DBMS: SQLite", "3 columns")),
-        ("--banner --schema --dump -T users --binary-fields=surname --where 'id>3'", ("banner: '3", "INTEGER", "TEXT", "id", "name", "surname", "2 entries", "6E616D6569736E756C6C")),
+        ("--flush-session", ("CloudFlare",)),
+        ("--flush-session --parse-errors --eval=\"id2=2\" --referer=\"localhost\" --cookie=\"PHPSESSID=d41d8cd98f00b204e9800998ecf8427e\"", (": syntax error", "Type: boolean-based blind", "Type: time-based blind", "Type: UNION query", "back-end DBMS: SQLite", "3 columns")),
+        ("--banner --schema --dump -T users --binary-fields=surname --where \"id>3\"", ("banner: '3", "INTEGER", "TEXT", "id", "name", "surname", "2 entries", "6E616D6569736E756C6C")),
         ("--all --tamper=between,randomcase", ("5 entries", "luther", "blisset", "fluffy", "179ad45c6ce2cb97cf1029e212046e81", "NULL", "nameisnull", "testpass")),
-        ("--technique=B --hex --fresh-queries --threads=4 --sql-query='SELECT 987654321'", ("length of query output", ": '987654321'",)),
-        ("--technique=T --fresh-queries --sql-query='SELECT 1234'", (": '1234'",)),
+        ("-z \"tec=B\" --hex --fresh-queries --threads=4 --sql-query=\"SELECT 987654321\"", ("length of query output", ": '987654321'",)),
+        ("--technique=T --fresh-queries --sql-query=\"SELECT 1234\"", (": '1234'",)),
     ):
-        output = shellExec("%s %s -u http://%s:%d/?id=1 --batch %s" % (sys.executable, os.path.join(os.path.dirname(__file__), "..", "..", "sqlmap.py"), address, port, options))
-        output = getUnicode(output)
+        cmd = "%s %s -u http://%s:%d/?id=1 --batch %s" % (sys.executable, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "sqlmap.py")), address, port, options)
+        output = shellExec(cmd)
 
         if not all(check in output for check in checks):
+            dataToStdout("---\n\n$ %s\n" % cmd)
+            dataToStdout("%s---\n" % clearColors(output))
             retVal = False
 
         count += 1
@@ -166,7 +172,7 @@ def smokeTest():
                     logger.setLevel(logging.CRITICAL)
                     kb.smokeMode = True
 
-                    (failure_count, test_count) = doctest.testmod(module)
+                    (failure_count, _) = doctest.testmod(module)
 
                     kb.smokeMode = False
                     logger.setLevel(logging.INFO)
@@ -177,6 +183,27 @@ def smokeTest():
                 count += 1
                 status = '%d/%d (%d%%) ' % (count, length, round(100.0 * count / length))
                 dataToStdout("\r[%s] [INFO] complete: %s" % (time.strftime("%X"), status))
+
+    def _(node):
+        for __ in dir(node):
+            if not __.startswith('_'):
+                candidate = getattr(node, __)
+                if isinstance(candidate, str):
+                    if '\\' in candidate:
+                        try:
+                            re.compile(candidate)
+                        except:
+                            errMsg = "smoke test failed at compiling '%s'" % candidate
+                            logger.error(errMsg)
+                            raise
+                else:
+                    _(candidate)
+
+    for dbms in queries:
+        try:
+            _(queries[dbms])
+        except:
+            retVal = False
 
     clearConsoleLine()
     if retVal:

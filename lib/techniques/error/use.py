@@ -34,7 +34,7 @@ from lib.core.common import wasLastResponseHTTPError
 from lib.core.compat import xrange
 from lib.core.convert import decodeHex
 from lib.core.convert import getUnicode
-from lib.core.convert import htmlunescape
+from lib.core.convert import htmlUnescape
 from lib.core.data import conf
 from lib.core.data import kb
 from lib.core.data import logger
@@ -45,8 +45,8 @@ from lib.core.enums import HASHDB_KEYS
 from lib.core.enums import HTTP_HEADER
 from lib.core.exception import SqlmapDataException
 from lib.core.settings import CHECK_ZERO_COLUMNS_THRESHOLD
-from lib.core.settings import MIN_ERROR_CHUNK_LENGTH
 from lib.core.settings import MAX_ERROR_CHUNK_LENGTH
+from lib.core.settings import MIN_ERROR_CHUNK_LENGTH
 from lib.core.settings import NULL
 from lib.core.settings import PARTIAL_VALUE_MARKER
 from lib.core.settings import ROTATING_CHARS
@@ -74,7 +74,7 @@ def _oneShotErrorUse(expression, field=None, chunkTest=False):
 
     threadData.resumed = retVal is not None and not partialValue
 
-    if any(Backend.isDbms(dbms) for dbms in (DBMS.MYSQL, DBMS.MSSQL)) and kb.errorChunkLength is None and not chunkTest and not kb.testMode:
+    if any(Backend.isDbms(dbms) for dbms in (DBMS.MYSQL, DBMS.MSSQL, DBMS.ORACLE)) and kb.errorChunkLength is None and not chunkTest and not kb.testMode:
         debugMsg = "searching for error chunk length..."
         logger.debug(debugMsg)
 
@@ -82,8 +82,11 @@ def _oneShotErrorUse(expression, field=None, chunkTest=False):
         while current >= MIN_ERROR_CHUNK_LENGTH:
             testChar = str(current % 10)
 
-            testQuery = "%s('%s',%d)" % ("REPEAT" if Backend.isDbms(DBMS.MYSQL) else "REPLICATE", testChar, current)
-            testQuery = "SELECT %s" % (agent.hexConvertField(testQuery) if conf.hexConvert else testQuery)
+            if Backend.isDbms(DBMS.ORACLE):
+                testQuery = "RPAD('%s',%d,'%s')" % (testChar, current, testChar)
+            else:
+                testQuery = "%s('%s',%d)" % ("REPEAT" if Backend.isDbms(DBMS.MYSQL) else "REPLICATE", testChar, current)
+                testQuery = "SELECT %s" % (agent.hexConvertField(testQuery) if conf.hexConvert else testQuery)
 
             result = unArrayizeValue(_oneShotErrorUse(testQuery, chunkTest=True))
 
@@ -112,7 +115,7 @@ def _oneShotErrorUse(expression, field=None, chunkTest=False):
                 if field:
                     nulledCastedField = agent.nullAndCastField(field)
 
-                    if any(Backend.isDbms(dbms) for dbms in (DBMS.MYSQL, DBMS.MSSQL)) and not any(_ in field for _ in ("COUNT", "CASE")) and kb.errorChunkLength and not chunkTest:
+                    if any(Backend.isDbms(dbms) for dbms in (DBMS.MYSQL, DBMS.MSSQL, DBMS.ORACLE)) and not any(_ in field for _ in ("COUNT", "CASE")) and kb.errorChunkLength and not chunkTest:
                         extendedField = re.search(r"[^ ,]*%s[^ ,]*" % re.escape(field), expression).group(0)
                         if extendedField != field:  # e.g. MIN(surname)
                             nulledCastedField = extendedField.replace(field, nulledCastedField)
@@ -172,7 +175,7 @@ def _oneShotErrorUse(expression, field=None, chunkTest=False):
                             else:
                                 output = output.rstrip()
 
-                if any(Backend.isDbms(dbms) for dbms in (DBMS.MYSQL, DBMS.MSSQL)):
+                if any(Backend.isDbms(dbms) for dbms in (DBMS.MYSQL, DBMS.MSSQL, DBMS.ORACLE)):
                     if offset == 1:
                         retVal = output
                     else:
@@ -204,7 +207,7 @@ def _oneShotErrorUse(expression, field=None, chunkTest=False):
         retVal = decodeDbmsHexValue(retVal) if conf.hexConvert else retVal
 
         if isinstance(retVal, six.string_types):
-            retVal = htmlunescape(retVal).replace("<br>", "\n")
+            retVal = htmlUnescape(retVal).replace("<br>", "\n")
 
         retVal = _errorReplaceChars(retVal)
 
@@ -449,7 +452,7 @@ def errorUse(expression, dump=False):
         value = _errorFields(expression, expressionFields, expressionFieldsList)
 
     if value and isListLike(value):
-        if len(value) == 1 and isinstance(value[0], six.string_types):
+        if len(value) == 1 and isinstance(value[0], (six.string_types, type(None))):
             value = unArrayizeValue(value)
         elif len(value) > 1 and stopLimit == 1:
             value = [value]

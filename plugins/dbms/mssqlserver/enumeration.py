@@ -33,7 +33,7 @@ from plugins.generic.enumeration import Enumeration as GenericEnumeration
 from thirdparty import six
 
 class Enumeration(GenericEnumeration):
-    def getPrivileges(self, *args):
+    def getPrivileges(self, *args, **kwargs):
         warnMsg = "on Microsoft SQL Server it is not possible to fetch "
         warnMsg += "database users privileges, sqlmap will check whether "
         warnMsg += "or not the database users are database administrators"
@@ -261,7 +261,7 @@ class Enumeration(GenericEnumeration):
                         kb.hintValue = tbl
                         foundTbls[db].append(tbl)
 
-        for db, tbls in foundTbls.items():
+        for db, tbls in list(foundTbls.items()):
             if len(tbls) == 0:
                 foundTbls.pop(db)
 

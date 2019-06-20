@@ -27,6 +27,7 @@ try:
     import re
     import shutil
     import sys
+    import tempfile
     import threading
     import time
     import traceback
@@ -53,15 +54,15 @@ try:
     from lib.core.data import cmdLineOptions
     from lib.core.data import conf
     from lib.core.data import kb
-    from lib.core.common import unhandledExceptionMessage
     from lib.core.common import MKSTEMP_PREFIX
     from lib.core.common import setColor
+    from lib.core.common import unhandledExceptionMessage
     from lib.core.exception import SqlmapBaseException
     from lib.core.exception import SqlmapShellQuitException
     from lib.core.exception import SqlmapSilentQuitException
     from lib.core.exception import SqlmapUserQuitException
-    from lib.core.option import initOptions
     from lib.core.option import init
+    from lib.core.option import initOptions
     from lib.core.patch import dirtyPatches
     from lib.core.patch import resolveCrossReferences
     from lib.core.settings import GIT_PAGE
@@ -242,6 +243,11 @@ def main():
             logger.critical(errMsg)
             raise SystemExit
 
+        elif all(_ in excMsg for _ in ("SyntaxError: Non-ASCII character", ".py on line", "but no encoding declared")) or any(_ in excMsg for _ in ("source code string cannot contain null bytes", "No module named")):
+            errMsg = "invalid runtime environment ('%s')" % excMsg.split("Error: ")[-1].strip()
+            logger.critical(errMsg)
+            raise SystemExit
+
         elif any(_ in excMsg for _ in ("MemoryError", "Cannot allocate memory")):
             errMsg = "memory exhaustion detected"
             logger.critical(errMsg)
@@ -257,7 +263,7 @@ def main():
             logger.critical(errMsg)
             raise SystemExit
 
-        elif all(_ in excMsg for _ in ("No such file", "_'", "self.get_prog_name()")):
+        elif all(_ in excMsg for _ in ("No such file", "_'")):
             errMsg = "corrupted installation detected ('%s'). " % excMsg.strip().split('\n')[-1]
             errMsg += "You should retrieve the latest development version from official GitHub "
             errMsg += "repository at '%s'" % GIT_PAGE
@@ -279,8 +285,21 @@ def main():
             logger.critical(errMsg)
             raise SystemExit
 
+        elif "Invalid IPv6 URL" in excMsg:
+            errMsg = "invalid URL ('%s')" % excMsg.strip().split('\n')[-1]
+            logger.critical(errMsg)
+            raise SystemExit
+
         elif "_mkstemp_inner" in excMsg:
             errMsg = "there has been a problem while accessing temporary files"
+            logger.critical(errMsg)
+            raise SystemExit
+
+        elif any(_ in excMsg for _ in ("tempfile.mkdtemp", "tempfile.mkstemp")):
+            errMsg = "unable to write to the temporary directory '%s'. " % tempfile.gettempdir()
+            errMsg += "Please make sure that your disk is not full and "
+            errMsg += "that you have sufficient write permissions to "
+            errMsg += "create temporary files and/or directories"
             logger.critical(errMsg)
             raise SystemExit
 
@@ -338,7 +357,10 @@ def main():
 
         for match in re.finditer(r'File "(.+?)", line', excMsg):
             file_ = match.group(1)
-            file_ = os.path.relpath(file_, os.path.dirname(__file__))
+            try:
+                file_ = os.path.relpath(file_, os.path.dirname(__file__))
+            except ValueError:
+                pass
             file_ = file_.replace("\\", '/')
             if "../" in file_:
                 file_ = re.sub(r"(\.\./)+", '/', file_)
@@ -388,8 +410,12 @@ def main():
             conf.hashDB.flush(True)
 
         if conf.get("harFile"):
-            with openFile(conf.harFile, "w+b") as f:
-                json.dump(conf.httpCollector.obtain(), fp=f, indent=4, separators=(',', ': '))
+            try:
+                with openFile(conf.harFile, "w+b") as f:
+                    json.dump(conf.httpCollector.obtain(), fp=f, indent=4, separators=(',', ': '))
+            except SqlmapBaseException as ex:
+                errMsg = getSafeExString(ex)
+                logger.critical(errMsg)
 
         if conf.get("api"):
             conf.databaseCursor.disconnect()

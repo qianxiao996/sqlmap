@@ -5,6 +5,8 @@ Copyright (c) 2006-2019 sqlmap developers (http://sqlmap.org/)
 See the file 'LICENSE' for copying permission
 """
 
+from __future__ import division
+
 import os
 import re
 import tempfile
@@ -20,7 +22,7 @@ from lib.core.common import readInput
 from lib.core.common import safeCSValue
 from lib.core.common import urldecode
 from lib.core.compat import xrange
-from lib.core.convert import htmlunescape
+from lib.core.convert import htmlUnescape
 from lib.core.data import conf
 from lib.core.data import kb
 from lib.core.data import logger
@@ -99,7 +101,7 @@ def crawl(target):
                             if href:
                                 if threadData.lastRedirectURL and threadData.lastRedirectURL[0] == threadData.lastRequestUID:
                                     current = threadData.lastRedirectURL[1]
-                                url = _urllib.parse.urljoin(current, htmlunescape(href))
+                                url = _urllib.parse.urljoin(current, htmlUnescape(href))
 
                                 # flag to know if we are dealing with the same target host
                                 _ = checkSameHost(url, target)

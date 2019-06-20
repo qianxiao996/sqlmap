@@ -5,6 +5,8 @@ Copyright (c) 2006-2019 sqlmap developers (http://sqlmap.org/)
 See the file 'LICENSE' for copying permission
 """
 
+from __future__ import division
+
 import re
 import threading
 import time
@@ -19,8 +21,8 @@ from lib.core.common import decodeIntToUnicode
 from lib.core.common import filterControlChars
 from lib.core.common import getCharset
 from lib.core.common import getCounter
-from lib.core.common import goGoodSamaritan
 from lib.core.common import getPartRun
+from lib.core.common import goGoodSamaritan
 from lib.core.common import hashDBRetrieve
 from lib.core.common import hashDBWrite
 from lib.core.common import incrementCounter
@@ -37,11 +39,11 @@ from lib.core.enums import PAYLOAD
 from lib.core.exception import SqlmapThreadException
 from lib.core.settings import CHAR_INFERENCE_MARK
 from lib.core.settings import INFERENCE_BLANK_BREAK
-from lib.core.settings import INFERENCE_UNKNOWN_CHAR
-from lib.core.settings import INFERENCE_GREATER_CHAR
 from lib.core.settings import INFERENCE_EQUALS_CHAR
+from lib.core.settings import INFERENCE_GREATER_CHAR
 from lib.core.settings import INFERENCE_MARKER
 from lib.core.settings import INFERENCE_NOT_EQUALS_CHAR
+from lib.core.settings import INFERENCE_UNKNOWN_CHAR
 from lib.core.settings import MAX_BISECTION_LENGTH
 from lib.core.settings import MAX_REVALIDATION_STEPS
 from lib.core.settings import NULL
@@ -163,12 +165,8 @@ def bisection(payload, expression, length=None, charsetType=None, firstChar=None
         if showEta:
             progress = ProgressBar(maxValue=length)
 
-        if timeBasedCompare and conf.threads > 1 and not conf.forceThreads:
-            warnMsg = "multi-threading is considered unsafe in time-based data retrieval. Going to switch it off automatically"
-            singleTimeWarnMessage(warnMsg)
-
         if numThreads > 1:
-            if not timeBasedCompare or conf.forceThreads:
+            if not timeBasedCompare or kb.forceThreads:
                 debugMsg = "starting %d thread%s" % (numThreads, ("s" if numThreads > 1 else ""))
                 logger.debug(debugMsg)
             else:
@@ -192,7 +190,7 @@ def bisection(payload, expression, length=None, charsetType=None, firstChar=None
             with hintlock:
                 hintValue = kb.hintValue
 
-            if payload is not None and hintValue is not None and len(hintValue) >= idx:
+            if payload is not None and len(hintValue or "") > 0 and len(hintValue) >= idx:
                 if Backend.getIdentifiedDbms() in (DBMS.SQLITE, DBMS.ACCESS, DBMS.MAXDB, DBMS.DB2):
                     posValue = hintValue[idx - 1]
                 else:
@@ -209,7 +207,7 @@ def bisection(payload, expression, length=None, charsetType=None, firstChar=None
                     return hintValue[idx - 1]
 
             with hintlock:
-                kb.hintValue = None
+                kb.hintValue = ""
 
             return None
 
@@ -279,7 +277,7 @@ def bisection(payload, expression, length=None, charsetType=None, firstChar=None
                     return None
 
             maxChar = maxValue = charTbl[-1]
-            minChar = minValue = charTbl[0]
+            minValue = charTbl[0]
             firstCheck = False
             lastCheck = False
             unexpectedCode = False
@@ -379,7 +377,7 @@ def bisection(payload, expression, length=None, charsetType=None, firstChar=None
                                 charTbl = xrange(maxChar + 1, (maxChar + 1) << shiftTable.pop())
                                 originalTbl = xrange(charTbl)
                                 maxChar = maxValue = charTbl[-1]
-                                minChar = minValue = charTbl[0]
+                                minValue = charTbl[0]
                             else:
                                 return None
                         else:
@@ -391,7 +389,7 @@ def bisection(payload, expression, length=None, charsetType=None, firstChar=None
                                         kb.originalTimeDelay = conf.timeSec
 
                                     threadData.validationRun = 0
-                                    if retried < MAX_REVALIDATION_STEPS:
+                                    if (retried or 0) < MAX_REVALIDATION_STEPS:
                                         errMsg = "invalid character detected. retrying.."
                                         logger.error(errMsg)
 

@@ -32,14 +32,14 @@ from lib.core.decorators import stackedmethod
 from lib.core.dicts import FROM_DUMMY_TABLE
 from lib.core.enums import PAYLOAD
 from lib.core.settings import LIMITED_ROWS_TEST_NUMBER
-from lib.core.settings import UNION_MIN_RESPONSE_CHARS
-from lib.core.settings import UNION_STDEV_COEFF
-from lib.core.settings import MIN_RATIO
 from lib.core.settings import MAX_RATIO
+from lib.core.settings import MIN_RATIO
 from lib.core.settings import MIN_STATISTICAL_RANGE
 from lib.core.settings import MIN_UNION_RESPONSES
 from lib.core.settings import NULL
 from lib.core.settings import ORDER_BY_STEP
+from lib.core.settings import UNION_MIN_RESPONSE_CHARS
+from lib.core.settings import UNION_STDEV_COEFF
 from lib.core.unescaper import unescaper
 from lib.request.comparison import comparison
 from lib.request.connect import Connect as Request
@@ -91,13 +91,15 @@ def _findUnionCharCount(comment, place, parameter, value, prefix, suffix, where=
         kb.errorIsNone = False
         lowerCount, upperCount = conf.uColsStart, conf.uColsStop
 
-        if kb.orderByColumns is None and (lowerCount == 1 or conf.uCols):  # ORDER BY is not bullet-proof
+        if kb.orderByColumns is None and (lowerCount == 1 or conf.uCols):  # Note: ORDER BY is not bullet-proof
             found = _orderByTechnique(lowerCount, upperCount) if conf.uCols else _orderByTechnique()
             if found:
                 kb.orderByColumns = found
                 infoMsg = "target URL appears to have %d column%s in query" % (found, 's' if found > 1 else "")
                 singleTimeLogMessage(infoMsg)
                 return found
+            elif kb.futileUnion:
+                return None
 
         if abs(upperCount - lowerCount) < MIN_UNION_RESPONSES:
             upperCount = lowerCount + MIN_UNION_RESPONSES
@@ -144,17 +146,17 @@ def _findUnionCharCount(comment, place, parameter, value, prefix, suffix, where=
                 retVal = minItem[0]
 
             elif abs(max_ - min_) >= MIN_STATISTICAL_RANGE:
-                    deviation = stdev(ratios)
+                deviation = stdev(ratios)
 
-                    if deviation is not None:
-                        lower, upper = average(ratios) - UNION_STDEV_COEFF * deviation, average(ratios) + UNION_STDEV_COEFF * deviation
+                if deviation is not None:
+                    lower, upper = average(ratios) - UNION_STDEV_COEFF * deviation, average(ratios) + UNION_STDEV_COEFF * deviation
 
-                        if min_ < lower:
-                            retVal = minItem[0]
+                    if min_ < lower:
+                        retVal = minItem[0]
 
-                        if max_ > upper:
-                            if retVal is None or abs(max_ - upper) > abs(min_ - lower):
-                                retVal = maxItem[0]
+                    if max_ > upper:
+                        if retVal is None or abs(max_ - upper) > abs(min_ - lower):
+                            retVal = maxItem[0]
     finally:
         kb.errorIsNone = popValue()
 

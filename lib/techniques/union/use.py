@@ -21,7 +21,6 @@ from lib.core.common import dataToStdout
 from lib.core.common import extractRegexResult
 from lib.core.common import firstNotNone
 from lib.core.common import flattenValue
-from lib.core.common import safeStringFormat
 from lib.core.common import getConsoleWidth
 from lib.core.common import getPartRun
 from lib.core.common import hashDBRetrieve
@@ -34,6 +33,7 @@ from lib.core.common import isNumPosStrValue
 from lib.core.common import listToStrValue
 from lib.core.common import parseUnionPage
 from lib.core.common import removeReflectiveValues
+from lib.core.common import safeStringFormat
 from lib.core.common import singleTimeDebugMessage
 from lib.core.common import singleTimeWarnMessage
 from lib.core.common import unArrayizeValue
@@ -42,7 +42,7 @@ from lib.core.compat import xrange
 from lib.core.convert import decodeBase64
 from lib.core.convert import getBytes
 from lib.core.convert import getUnicode
-from lib.core.convert import htmlunescape
+from lib.core.convert import htmlUnescape
 from lib.core.data import conf
 from lib.core.data import kb
 from lib.core.data import logger
@@ -147,7 +147,7 @@ def _oneShotUnionUse(expression, unpack=True, limited=False):
 
             # Special case when DBMS is Microsoft SQL Server and error message is used as a result of UNION injection
             if Backend.isDbms(DBMS.MSSQL) and wasLastResponseDBMSError():
-                retVal = htmlunescape(retVal).replace("<br>", "\n")
+                retVal = htmlUnescape(retVal).replace("<br>", "\n")
 
             hashDBWrite("%s%s" % (conf.hexConvert or False, expression), retVal)
 
@@ -352,7 +352,7 @@ def unionUse(expression, unpack=True, dump=False):
                                                     key = re.sub(r"[^A-Za-z0-9]", "", item).lower()
                                                     if key not in filtered or re.search(r"[^A-Za-z0-9]", item):
                                                         filtered[key] = item
-                                                items = list(filtered.values())
+                                                items = list(six.itervalues(filtered))
                                             items = [items]
                                         index = None
                                         for index in xrange(1 + len(threadData.shared.buffered)):

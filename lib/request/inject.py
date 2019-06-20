@@ -90,8 +90,15 @@ def _goInference(payload, expression, charsetType=None, firstChar=None, lastChar
 
     timeBasedCompare = (kb.technique in (PAYLOAD.TECHNIQUE.TIME, PAYLOAD.TECHNIQUE.STACKED))
 
+    if timeBasedCompare and conf.threads > 1 and kb.forceThreads is None:
+        msg = "multi-threading is considered unsafe in "
+        msg += "time-based data retrieval. Are you sure "
+        msg += "of your choice (breaking warranty) [y/N] "
+
+        kb.forceThreads = readInput(msg, default='N', boolean=True)
+
     if not (timeBasedCompare and kb.dnsTest):
-        if (conf.eta or conf.threads > 1) and Backend.getIdentifiedDbms() and not re.search(r"(COUNT|LTRIM)\(", expression, re.I) and not (timeBasedCompare and not conf.forceThreads):
+        if (conf.eta or conf.threads > 1) and Backend.getIdentifiedDbms() and not re.search(r"(COUNT|LTRIM)\(", expression, re.I) and not (timeBasedCompare and not kb.forceThreads):
 
             if field and re.search(r"\ASELECT\s+DISTINCT\((.+?)\)\s+FROM", expression, re.I):
                 expression = "SELECT %s FROM (%s)" % (field, expression)

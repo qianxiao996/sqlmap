@@ -172,9 +172,9 @@ class Agent(object):
 
         if place in (PLACE.URI, PLACE.CUSTOM_POST, PLACE.CUSTOM_HEADER):
             _ = "%s%s" % (origValue, kb.customInjectionMark)
-            if kb.postHint == POST_HINT.JSON and not isNumber(newValue) and not '"%s"' % _ in paramString:
+            if kb.postHint == POST_HINT.JSON and not isNumber(newValue) and '"%s"' % _ not in paramString:
                 newValue = '"%s"' % newValue
-            elif kb.postHint == POST_HINT.JSON_LIKE and not isNumber(newValue) and not "'%s'" % _ in paramString:
+            elif kb.postHint == POST_HINT.JSON_LIKE and not isNumber(newValue) and "'%s'" % _ not in paramString:
                 newValue = "'%s'" % newValue
             newValue = newValue.replace(kb.customInjectionMark, REPLACEMENT_MARKER)
             retVal = paramString.replace(_, self.addPayloadDelimiters(newValue))
@@ -265,7 +265,7 @@ class Agent(object):
 
         return query
 
-    def suffixQuery(self, expression, comment=None, suffix=None, where=None):
+    def suffixQuery(self, expression, comment=None, suffix=None, where=None, trimEmpty=True):
         """
         This method appends the DBMS comment to the
         SQL injection request
@@ -298,9 +298,12 @@ class Agent(object):
             pass
 
         elif suffix and not comment:
+            if re.search(r"\w\Z", expression) and re.search(r"\A\w", suffix):
+                expression += " "
+
             expression += suffix.replace('\\', BOUNDARY_BACKSLASH_MARKER)
 
-        return re.sub(r";\W*;", ";", expression)
+        return re.sub(r";\W*;", ";", expression) if trimEmpty else expression
 
     def cleanupPayload(self, payload, origValue=None):
         if payload is None:
@@ -995,7 +998,7 @@ class Agent(object):
                 limitedQuery = limitedQuery.replace("SELECT ", (limitStr % 1), 1)
 
                 if " ORDER BY " not in fromFrom:
-                    # Reference: http://vorg.ca/626-the-MS-SQL-equivalent-to-MySQLs-limit-command
+                    # Reference: https://web.archive.org/web/20150218053955/http://vorg.ca/626-the-MS-SQL-equivalent-to-MySQLs-limit-command
                     if " WHERE " in limitedQuery:
                         limitedQuery = "%s AND %s " % (limitedQuery, self.nullAndCastField(uniqueField or field))
                     else:

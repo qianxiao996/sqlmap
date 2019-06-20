@@ -13,12 +13,12 @@ import shutil
 import tempfile
 import threading
 
+from extra.safe2bin.safe2bin import safechardecode
 from lib.core.common import Backend
 from lib.core.common import checkFile
 from lib.core.common import dataToDumpFile
 from lib.core.common import dataToStdout
 from lib.core.common import getSafeExString
-from lib.core.common import getText
 from lib.core.common import isListLike
 from lib.core.common import isMultiThreadMode
 from lib.core.common import normalizeUnicode
@@ -29,6 +29,7 @@ from lib.core.common import safeCSValue
 from lib.core.common import unsafeSQLIdentificatorNaming
 from lib.core.compat import xrange
 from lib.core.convert import getBytes
+from lib.core.convert import getText
 from lib.core.convert import getUnicode
 from lib.core.data import conf
 from lib.core.data import kb
@@ -39,8 +40,8 @@ from lib.core.enums import CONTENT_TYPE
 from lib.core.enums import DBMS
 from lib.core.enums import DUMP_FORMAT
 from lib.core.exception import SqlmapGenericException
-from lib.core.exception import SqlmapValueException
 from lib.core.exception import SqlmapSystemException
+from lib.core.exception import SqlmapValueException
 from lib.core.replication import Replication
 from lib.core.settings import DUMP_FILE_BUFFER_SIZE
 from lib.core.settings import HTML_DUMP_CSS_STYLE
@@ -54,8 +55,6 @@ from lib.core.settings import VERSION_STRING
 from lib.core.settings import WINDOWS_RESERVED_NAMES
 from thirdparty import six
 from thirdparty.magic import magic
-
-from extra.safe2bin.safe2bin import safechardecode
 
 class Dump(object):
     """
@@ -187,6 +186,9 @@ class Dump(object):
 
     def users(self, users):
         self.lister("database management system users", users, content_type=CONTENT_TYPE.USERS)
+
+    def statements(self, statements):
+        self.lister("SQL statements", statements, content_type=CONTENT_TYPE.STATEMENTS)
 
     def userSettings(self, header, userSettings, subHeader, content_type=None):
         self._areAdmins = set()
@@ -430,15 +432,7 @@ class Dump(object):
                         try:
                             os.makedirs(dumpDbPath)
                         except Exception as ex:
-                            try:
-                                tempDir = tempfile.mkdtemp(prefix="sqlmapdb")
-                            except IOError as _:
-                                errMsg = "unable to write to the temporary directory ('%s'). " % _
-                                errMsg += "Please make sure that your disk is not full and "
-                                errMsg += "that you have sufficient write permissions to "
-                                errMsg += "create temporary files and/or directories"
-                                raise SqlmapSystemException(errMsg)
-
+                            tempDir = tempfile.mkdtemp(prefix="sqlmapdb")
                             warnMsg = "unable to create dump directory "
                             warnMsg += "'%s' (%s). " % (dumpDbPath, getSafeExString(ex))
                             warnMsg += "Using temporary directory '%s' instead" % tempDir
@@ -473,8 +467,7 @@ class Dump(object):
                                 shutil.copyfile(dumpFileName, candidate)
                             except IOError:
                                 pass
-                            finally:
-                                break
+                            break
                         else:
                             count += 1
 
@@ -565,7 +558,7 @@ class Dump(object):
                         else:
                             dataToDumpFile(dumpFP, "%s%s" % (safeCSValue(column), conf.csvDel))
                     elif conf.dumpFormat == DUMP_FORMAT.HTML:
-                        dataToDumpFile(dumpFP, "<th>%s</th>" % cgi.escape(column).encode("ascii", "xmlcharrefreplace"))
+                        dataToDumpFile(dumpFP, "<th>%s</th>" % getUnicode(cgi.escape(column).encode("ascii", "xmlcharrefreplace")))
 
                 field += 1
 
@@ -636,7 +629,7 @@ class Dump(object):
                         else:
                             dataToDumpFile(dumpFP, "%s%s" % (safeCSValue(value), conf.csvDel))
                     elif conf.dumpFormat == DUMP_FORMAT.HTML:
-                        dataToDumpFile(dumpFP, "<td>%s</td>" % cgi.escape(value).encode("ascii", "xmlcharrefreplace"))
+                        dataToDumpFile(dumpFP, "<td>%s</td>" % getUnicode(cgi.escape(value).encode("ascii", "xmlcharrefreplace")))
 
                     field += 1
 

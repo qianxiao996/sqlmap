@@ -48,7 +48,7 @@ from lib.utils.pivotdumptable import pivotDumpTable
 from thirdparty import six
 from thirdparty.six.moves import zip as _zip
 
-class Entries:
+class Entries(object):
     """
     This class defines entries' enumeration functionalities for plugins.
     """
@@ -93,9 +93,9 @@ class Entries:
             self.getTables()
 
             if len(kb.data.cachedTables) > 0:
-                tblList = list(kb.data.cachedTables.values())
+                tblList = list(six.itervalues(kb.data.cachedTables))
 
-                if isListLike(tblList[0]):
+                if tblList and isListLike(tblList[0]):
                     tblList = tblList[0]
             elif not conf.search:
                 errMsg = "unable to retrieve the tables "

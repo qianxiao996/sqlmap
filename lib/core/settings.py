@@ -15,10 +15,10 @@ import sys
 from lib.core.enums import DBMS
 from lib.core.enums import DBMS_DIRECTORY_NAME
 from lib.core.enums import OS
-from thirdparty import six
+from thirdparty.six import unichr as _unichr
 
 # sqlmap version (<major>.<minor>.<month>.<monthly commit>)
-VERSION = "1.3.5.59"
+VERSION = "1.3.6.49"
 TYPE = "dev" if VERSION.count('.') > 2 and VERSION.split('.')[-1] != '0' else "stable"
 TYPE_COLORS = {"dev": 33, "stable": 90, "pip": 34}
 VERSION_STRING = "sqlmap/%s#%s" % ('.'.join(VERSION.split('.')[:-1]) if VERSION.count('.') > 2 and VERSION.split('.')[-1] == '0' else VERSION, TYPE)
@@ -46,10 +46,10 @@ DIFF_TOLERANCE = 0.05
 CONSTANT_RATIO = 0.9
 
 # Ratio used in heuristic check for WAF/IPS protected targets
-IDS_WAF_CHECK_RATIO = 0.5
+IPS_WAF_CHECK_RATIO = 0.5
 
 # Timeout used in heuristic check for WAF/IPS protected targets
-IDS_WAF_CHECK_TIMEOUT = 10
+IPS_WAF_CHECK_TIMEOUT = 10
 
 # Lower and upper values for match ratio in case of stable page
 LOWER_RATIO_BOUND = 0.02
@@ -101,6 +101,9 @@ PRECONNECT_CANDIDATE_TIMEOUT = 10
 
 # Servers known to cause issue with pre-connection mechanism (because of lack of multi-threaded support)
 PRECONNECT_INCOMPATIBLE_SERVERS = ("SimpleHTTP", "BaseHTTP")
+
+# Identify WAF/IPS inside limited number of responses (Note: for optimization purposes)
+IDENTYWAF_PARSE_LIMIT = 10
 
 # Maximum sleep time in "Murphy" (testing) mode
 MAX_MURPHY_SLEEP_TIME = 3
@@ -233,6 +236,9 @@ PLATFORM = os.name
 PYVERSION = sys.version.split()[0]
 IS_WIN = PLATFORM == "nt"
 
+# Check if running in terminal
+IS_TTY = os.isatty(sys.stdout.fileno())
+
 # DBMS system databases
 MSSQL_SYSTEM_DBS = ("Northwind", "master", "model", "msdb", "pubs", "tempdb")
 MYSQL_SYSTEM_DBS = ("information_schema", "mysql", "performance_schema", "sys")
@@ -290,7 +296,7 @@ BASIC_HELP_ITEMS = (
     "dbms",
     "level",
     "risk",
-    "tech",
+    "technique",
     "getAll",
     "getBanner",
     "getCurrentUser",
@@ -384,7 +390,7 @@ URI_INJECTABLE_REGEX = r"//[^/]*/([^\.*?]+)\Z"
 SENSITIVE_DATA_REGEX = r"(\s|=)(?P<result>[^\s=]*\b%s\b[^\s]*)\s"
 
 # Options to explicitly mask in anonymous (unhandled exception) reports (along with anything carrying the <hostname> inside)
-SENSITIVE_OPTIONS = ("hostname", "answers", "data", "dnsDomain", "googleDork", "authCred", "proxyCred", "tbl", "db", "col", "user", "cookie", "proxy", "fileRead", "fileWrite", "fileDest", "testParameter", "authCred", "sqlQuery")
+SENSITIVE_OPTIONS = ("hostname", "answers", "data", "dnsDomain", "googleDork", "authCred", "proxyCred", "tbl", "db", "col", "user", "cookie", "proxy", "fileRead", "fileWrite", "fileDest", "testParameter", "authCred", "sqlQuery", "requestFile")
 
 # Maximum number of threads (avoiding connection issues and/or DoS)
 MAX_NUMBER_OF_THREADS = 10
@@ -494,6 +500,9 @@ DEFAULT_TOR_HTTP_PORTS = (8123, 8118)
 # Percentage below which comparison engine could have problems
 LOW_TEXT_PERCENT = 20
 
+# Auxiliary value used in isDBMSVersionAtLeast() version comparison correction cases
+VERSION_COMPARISON_CORRECTION = 0.0001
+
 # These MySQL keywords can't go (alone) into versioned comment form (/*!...*/)
 # Reference: http://dev.mysql.com/doc/refman/5.1/en/function-resolution.html
 IGNORE_SPACE_AFFECTED_KEYWORDS = ("CAST", "COUNT", "EXTRACT", "GROUP_CONCAT", "MAX", "MID", "MIN", "SESSION_USER", "SUBSTR", "SUBSTRING", "SUM", "SYSTEM_USER", "TRIM")
@@ -535,6 +544,9 @@ SHELLCODEEXEC_RANDOM_STRING_MARKER = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 
 # Period after last-update to start nagging about the old revision
 LAST_UPDATE_NAGGING_DAYS = 60
+
+# Minimum non-writing chars (e.g. ['"-:/]) ratio in case of parsed error messages
+MIN_ERROR_PARSING_NON_WRITING_RATIO = 0.05
 
 # Generic address for checking the Internet connection while using switch --check-internet
 CHECK_INTERNET_ADDRESS = "https://ipinfo.io/"
@@ -633,11 +645,17 @@ SLOW_ORDER_COUNT_THRESHOLD = 10000
 # Give up on hash recognition if nothing was found in first given number of rows
 HASH_RECOGNITION_QUIT_THRESHOLD = 10000
 
+# Regular expression used for automatic hex conversion and hash cracking of (RAW) binary column values
+HASH_BINARY_COLUMNS_REGEX = r"(?i)pass|psw|hash"
+
 # Maximum number of redirections to any single URL - this is needed because of the state that cookies introduce
 MAX_SINGLE_URL_REDIRECTIONS = 4
 
 # Maximum total number of redirections (regardless of URL) - before assuming we're in a loop
 MAX_TOTAL_REDIRECTIONS = 10
+
+# Maximum (deliberate) delay used in page stability check
+MAX_STABILITY_DELAY = 0.5
 
 # Reference: http://www.tcpipguide.com/free/t_DNSLabelsNamesandSyntaxRules.htm
 MAX_DNS_LABEL = 63
@@ -660,8 +678,8 @@ FI_ERROR_REGEX = r"(?i)[^\n]{0,100}(no such file|failed (to )?open)[^\n]{0,100}"
 # Length of prefix and suffix used in non-SQLI heuristic checks
 NON_SQLI_CHECK_PREFIX_SUFFIX_LENGTH = 6
 
-# Connection chunk size (processing large responses in chunks to avoid MemoryError crashes - e.g. large table dump in full UNION injections)
-MAX_CONNECTION_CHUNK_SIZE = 10 * 1024 * 1024
+# Connection read size (processing large responses in parts to avoid MemoryError crashes - e.g. large table dump in full UNION injections)
+MAX_CONNECTION_READ_SIZE = 10 * 1024 * 1024
 
 # Maximum response total page size (trimmed if larger)
 MAX_CONNECTION_TOTAL_SIZE = 100 * 1024 * 1024
@@ -672,8 +690,8 @@ MAX_DIFFLIB_SEQUENCE_LENGTH = 10 * 1024 * 1024
 # Maximum (multi-threaded) length of entry in bisection algorithm
 MAX_BISECTION_LENGTH = 50 * 1024 * 1024
 
-# Mark used for trimming unnecessary content in large chunks
-LARGE_CHUNK_TRIM_MARKER = "__TRIMMED_CONTENT__"
+# Mark used for trimming unnecessary content in large connection reads
+LARGE_READ_TRIM_MARKER = "__TRIMMED_CONTENT__"
 
 # Generic SQL comment formation
 GENERIC_SQL_COMMENT = "-- [RANDSTR]"
@@ -774,6 +792,9 @@ LOBLKSIZE = 2048
 # Prefix used to mark special variables (e.g. keywords, having special chars, etc.)
 EVALCODE_ENCODED_PREFIX = "EVAL_"
 
+# Reference: https://en.wikipedia.org/wiki/Zip_(file_format)
+ZIP_HEADER = b"\x50\x4b\x03\x04"
+
 # Reference: http://www.cookiecentral.com/faq/#3.5
 NETSCAPE_FORMAT_HEADER_COOKIES = "# Netscape HTTP Cookie File."
 
@@ -840,7 +861,7 @@ for key, value in os.environ.items():
 def _reversible(ex):
     if isinstance(ex, UnicodeDecodeError):
         if INVALID_UNICODE_PRIVATE_AREA:
-            return (u"".join(six.unichr(int('000f00%2x' % (_ if isinstance(_, int) else ord(_)), 16)) for _ in ex.object[ex.start:ex.end]), ex.end)
+            return (u"".join(_unichr(int('000f00%2x' % (_ if isinstance(_, int) else ord(_)), 16)) for _ in ex.object[ex.start:ex.end]), ex.end)
         else:
             return (u"".join(INVALID_UNICODE_CHAR_FORMAT % (_ if isinstance(_, int) else ord(_)) for _ in ex.object[ex.start:ex.end]), ex.end)
 

@@ -15,6 +15,7 @@ from lib.core.common import getLimitRange
 from lib.core.common import isAdminFromPrivileges
 from lib.core.common import isInferenceAvailable
 from lib.core.common import isNoneValue
+from lib.core.common import isNullValue
 from lib.core.common import isNumPosStrValue
 from lib.core.common import isTechniqueAvailable
 from lib.core.common import parsePasswordHash
@@ -45,7 +46,7 @@ from lib.utils.hash import storeHashesToFile
 from lib.utils.pivotdumptable import pivotDumpTable
 from thirdparty.six.moves import zip as _zip
 
-class Users:
+class Users(object):
     """
     This class defines users' enumeration functionalities for plugins.
     """
@@ -203,8 +204,10 @@ class Users:
             else:
                 values = inject.getValue(query, blind=False, time=False)
 
-                if isNoneValue(values) and Backend.isDbms(DBMS.MSSQL):
+                if Backend.isDbms(DBMS.MSSQL) and isNoneValue(values):
                     values = inject.getValue(query.replace("master.dbo.fn_varbintohexstr", "sys.fn_sqlvarbasetostr"), blind=False, time=False)
+                elif Backend.isDbms(DBMS.MYSQL) and (isNoneValue(values) or all(len(value) == 2 and (isNullValue(value[1]) or isNoneValue(value[1])) for value in values)):
+                    values = inject.getValue(query.replace("authentication_string", "password"), blind=False, time=False)
 
                 for user, password in filterPairValues(values):
                     if not user or user == " ":
@@ -270,9 +273,13 @@ class Users:
 
                         count = inject.getValue(query, union=False, error=False, expected=EXPECTED.INT, charsetType=CHARSET_TYPE.DIGITS)
 
-                        if not isNumPosStrValue(count) and Backend.isDbms(DBMS.MSSQL):
-                            fallback = True
-                            count = inject.getValue(query.replace("master.dbo.fn_varbintohexstr", "sys.fn_sqlvarbasetostr"), union=False, error=False, expected=EXPECTED.INT, charsetType=CHARSET_TYPE.DIGITS)
+                        if not isNumPosStrValue(count):
+                            if Backend.isDbms(DBMS.MSSQL):
+                                fallback = True
+                                count = inject.getValue(query.replace("master.dbo.fn_varbintohexstr", "sys.fn_sqlvarbasetostr"), union=False, error=False, expected=EXPECTED.INT, charsetType=CHARSET_TYPE.DIGITS)
+                            elif Backend.isDbms(DBMS.MYSQL):
+                                fallback = True
+                                count = inject.getValue(query.replace("authentication_string", "password"), union=False, error=False, expected=EXPECTED.INT, charsetType=CHARSET_TYPE.DIGITS)
 
                         if not isNumPosStrValue(count):
                             warnMsg = "unable to retrieve the number of password "
@@ -306,6 +313,10 @@ class Users:
 
                         else:
                             query = rootQuery.blind.query % (user, index)
+
+                        if Backend.isDbms(DBMS.MYSQL):
+                            if fallback:
+                                query = query.replace("authentication_string", "password")
 
                         password = unArrayizeValue(inject.getValue(query, union=False, error=False))
                         password = parsePasswordHash(password)
